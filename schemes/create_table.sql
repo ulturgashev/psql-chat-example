@@ -10,36 +10,37 @@ CREATE TABLE IF NOT EXISTS chat.users (
 
 CREATE TABLE IF NOT EXISTS chat.dialogs (
     id TEXT PRIMARY KEY,
-    created_at TIMESTAMPTZ NOT NULL,
-    user_sender TEXT NOT NULL REFERENCES chat.users(id),
-    user_receiver TEXT NOT NULL REFERENCES chat.users(id) CHECK (user_sender <> user_receiver),
-    UNIQUE (user_sender, user_receiver)
+    name TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- TODO: add to check user_id in dialogs
-CREATE TABLE IF NOT EXISTS chat.unread_counters (
-    id TEXT PRIMARY KEY,
-    dialog_id TEXT NOT NULL REFERENCES chat.dialogs(id),
+-- copy paste from the internet. I don't know how does it work.
+DO $$
+BEGIN
+IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'participants_type') THEN 
+    CREATE TYPE participants_type AS ENUM (
+        'single',
+        'group'
+    );
+END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS chat.participants (
     user_id TEXT NOT NULL REFERENCES chat.users(id),
-    counter INT DEFAULT 0
+    dialog_id TEXT NOT NULL REFERENCES chat.dialogs(id),
+    created_at TIMESTAMPTZ NOT NULL,
+    type participants_type NOT NULL,
+    PRIMARY KEY (user_id, dialog_id)
 );
-
--- NOTE: may be it more scalable
--- CREATE TABLE IF NOT EXISTS chat.counters (
---     id TEXT PRIMARY KEY REFERENCES chat.dialogs(id),
---     counter INT DEFAULT 0
--- )
 
 CREATE TABLE IF NOT EXISTS chat.messages (
     idempotency_key_id TEXT PRIMARY KEY,
     dialog_id TEXT NOT NULL REFERENCES chat.dialogs(id),
-    id BIGINT NOT NULL,
     from_id TEXT NOT NULL REFERENCES chat.users(id),
     created_at TIMESTAMPTZ NOT NULL,
     unread BOOLEAN DEFAULT true,
     text TEXT,
-    media JSON,
-    UNIQUE (dialog_id, id)
+    media JSON
 );
 
 CREATE TABLE IF NOT EXISTS chat.users_mappers (

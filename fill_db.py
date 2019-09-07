@@ -9,6 +9,7 @@ import string
 import uuid
 
 
+SINGLE_CHAT_MEMBER_COUNT = 2
 VOWELS = "aeiou"
 CONSONANTS = "".join(set(string.ascii_lowercase) - set(VOWELS))
 
@@ -45,47 +46,57 @@ def max_available_dialogs(user_count):
         return 0
 
 
-def gen_dialogs(count, users):
-    if len(users) > max_available_dialogs(count):
-        return []
+def gen_dialogs(count):
+    return [
+        (uuid.uuid4().hex, generate_word(), datetime.datetime.utcnow())
+        for i in range(count)
+    ]
 
-    def is_unique_pair(lhs, rhs, d):
-        return lhs != rhs and rhs not in d.get(lhs, []) and lhs not in d.get(rhs, [])
 
-    def find_unique(key, d, l):
-        for entry in l:
-            values = d.get(key, [])
-            if entry not in values and entry != key:
-                return entry
+def gen_participants(dialogs, users, type='single'):
+    def make_dialog_touple(user_id, dialog_id, type):
+        return (user_id, dialog_id, datetime.datetime.utcnow(), type)
 
-    i = 0
-    user_ids = [entry[0] for entry in users]
+    def is_unique_pair(user_ids, users_dialogs):
+        for user_id in user_ids:
+            if user_id not in users_dialogs:
+                return True
+
+        user_id_list = list(user_ids)
+        l_dialogs = users_dialogs[user_id_list[0]]
+        r_dialogs = users_dialogs[user_id_list[1]]
+        intersections = l_dialogs & r_dialogs
+        if len(intersections):
+            return False
+        return True
+
+    def get_unique_users(users, users_dialogs, count):
+        user_ids = set()
+        while len(user_ids) < count:
+            user_ids.add(random.choice(users)[0])
+
+        if count == SINGLE_CHAT_MEMBER_COUNT:
+            if not is_unique_pair(user_ids, users_dialogs):
+                return get_unique_users(users, users_dialogs, count)
+
+        return user_ids
+
+    count = (
+        SINGLE_CHAT_MEMBER_COUNT
+        if type == 'single' else random.randint(3, len(users))
+    )
     results = []
-    unique_counter = {}
-    while i < count:
-        first_user = random.choice(user_ids)
-        second_user = random.choice(user_ids)
-
-        if not is_unique_pair(first_user, second_user, unique_counter):
-            second_user = find_unique(first_user, unique_counter, user_ids)
-            if second_user is None:
-                continue
-
-        results.append((
-            uuid.uuid4().hex,
-            datetime.datetime.utcnow(),
-            first_user,
-            second_user,
-        ))
-
-        print('users: ',first_user, second_user)
-        if first_user not in unique_counter:
-            unique_counter[first_user] = []
-        if second_user not in unique_counter:
-            unique_counter[second_user] = []
-        unique_counter[first_user].append(second_user)
-        unique_counter[second_user].append(first_user)
-        i = i + 1
+    users_dialogs = {}
+    for dialog in dialogs:
+        dialog_id = dialog[0]
+        unique_user_ids = get_unique_users(
+            users, users_dialogs, count
+        )
+        for user_id in unique_user_ids:
+            if user_id not in users_dialogs:
+                users_dialogs[user_id] = set()
+            users_dialogs[user_id].add(dialog_id)
+            results.append(make_dialog_touple(user_id, dialog_id, type))
 
     return results
 
@@ -106,35 +117,20 @@ def gen_messages(dialogs, users, count):
     results = []
     now = datetime.datetime.utcnow()
     timestamp = int(now.timestamp())
-    counter = {}
-    middle = count / 2
+    unread_count = count - count / 5
     for i in range(count):
-        dialog_id = random.choice(dialogs)[0]
-        if dialog_id in counter:
-            counter[dialog_id] += 1
-        else:
-            counter[dialog_id] = 0
-
         results.append((
             uuid.uuid4().hex,
-            dialog_id,
-            counter[dialog_id],
+            random.choice(dialogs)[0],
             random.choice(users)[0],
             datetime.datetime.utcfromtimestamp(
                 timestamp - random.getrandbits(20)
             ),
-            True if i > middle else False,
+            True if i > unread_count else False,
             generate_word(10),
         ))
 
     return results
-
-
-# NOTE: It is unused right now
-def gen_counters(chats):
-    return [
-        (uuid.uuid4().hex, chat[0], 0) for chat in chats
-    ]
 
 
 def build_query(table_name, values):
@@ -145,12 +141,22 @@ def build_query(table_name, values):
 
 async def fill_dialogs(conn, dialogs):
     values = [
-        "('{}', '{}', '{}', '{}')".format(
-            dialog[0], dialog[1], dialog[2], dialog[3]
+        "('{}', '{}', '{}')".format(
+            dialog[0], dialog[1], dialog[2]
         )
         for dialog in dialogs
     ]
     await conn.execute(build_query('chat.dialogs', values))
+
+
+async def fill_participants(conn, participants):
+    values = [
+        "('{}', '{}', '{}', '{}')".format(
+            participant[0], participant[1], participant[2], participant[3]
+        )
+        for participant in  participants
+    ]
+    await conn.execute(build_query('chat.participants', values))
 
 
 async def fill_users(conn, users):
@@ -175,20 +181,26 @@ async def fill_counters(conn, counters):
     await conn.execute(query)
 
 
-async def fill_messages(conn, messages):
-    values = [
-        "('{}', '{}', {}, '{}', '{}'::timestamptz, {})".format(
-            message[0],
-            message[1],
-            message[2],
-            message[3],
-            message[4],
-            message[5]
+async def fill_messages(conn, dialogs, users, count):
+    BATCH_SIZE = 20000
+    counter = 0
+    while counter < count:
+        messages = gen_messages(dialogs, users, BATCH_SIZE)
+        values = [
+            "('{}', '{}', {}, '{}'::timestamptz, '{}', '{}')".format(
+                message[0],
+                message[1],
+                message[2],
+                message[3],
+                message[4],
+                message[5]
+            )
+            for message in messages
+        ]
+        await conn.execute(
+            build_query('chat.messages', values)
         )
-        for message in messages
-    ]
-    # print(build_query('chat.messages', values))
-    await conn.execute(build_query('chat.messages', values))
+        counter = counter + BATCH_SIZE
 
 
 async def drop_schema(conn):
@@ -206,19 +218,19 @@ def _parse_args():
     parser.add_argument(
         '--chats_count',
         type=int,
-        default=20,
+        default=100,
         help=''
     )
     parser.add_argument(
         '--users_count',
         type=int,
-        default=10,
+        default=100,
         help=''
     )
     parser.add_argument(
         '--messages_count',
         type=int,
-        default=100,
+        default=1000000,
         help=''
     )
     parser.add_argument(
@@ -233,10 +245,8 @@ def _parse_args():
 async def fill_tables(conn, args):
     print('start prepearing data')
     users = gen_users(args.users_count)
-    dialogs = gen_dialogs(args.chats_count, users)
-    counters = gen_counters(dialogs)
-    messages = gen_messages(dialogs, users, args.messages_count)
-    print('finish prepearing data')
+    dialogs = gen_dialogs(args.chats_count)
+    participants = gen_participants(dialogs, users)
 
     await drop_schema(conn)
     print('schema was dropped')
@@ -246,7 +256,9 @@ async def fill_tables(conn, args):
     print('filled users')
     await fill_dialogs(conn, dialogs)
     print('filled dialogs')
-    await fill_messages(conn, messages)
+    await fill_participants(conn, participants)
+    print('filled participants')
+    await fill_messages(conn, dialogs, users, args.messages_count)
     print('filled messages')
     print('done')
 
