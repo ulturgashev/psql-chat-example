@@ -10,8 +10,8 @@ CREATE TABLE IF NOT EXISTS chat.users (
 
 CREATE TABLE IF NOT EXISTS chat.dialogs (
     id TEXT PRIMARY KEY,
-    name TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    name TEXT
 );
 
 -- copy paste from the internet. I don't know how does it work.
@@ -25,22 +25,24 @@ IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'participants_type') THEN
 END IF;
 END $$;
 
+CREATE TABLE IF NOT EXISTS chat.messages (
+    id TEXT PRIMARY KEY,
+    dialog_id TEXT NOT NULL REFERENCES chat.dialogs(id),
+    from_id TEXT NOT NULL REFERENCES chat.users(id),
+    created_at TIMESTAMPTZ NOT NULL,
+    text TEXT,
+    media JSON
+);
+
 CREATE TABLE IF NOT EXISTS chat.participants (
     user_id TEXT NOT NULL REFERENCES chat.users(id),
     dialog_id TEXT NOT NULL REFERENCES chat.dialogs(id),
     created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
     type participants_type NOT NULL,
+    unread_counter INT NOT NULL,
+    last_message_id TEXT REFERENCES chat.messages(id),
     PRIMARY KEY (user_id, dialog_id)
-);
-
-CREATE TABLE IF NOT EXISTS chat.messages (
-    idempotency_key_id TEXT PRIMARY KEY,
-    dialog_id TEXT NOT NULL REFERENCES chat.dialogs(id),
-    from_id TEXT NOT NULL REFERENCES chat.users(id),
-    created_at TIMESTAMPTZ NOT NULL,
-    unread BOOLEAN DEFAULT true,
-    text TEXT,
-    media JSON
 );
 
 CREATE TABLE IF NOT EXISTS chat.users_mappers (

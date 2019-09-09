@@ -48,14 +48,15 @@ def max_available_dialogs(user_count):
 
 def gen_dialogs(count):
     return [
-        (uuid.uuid4().hex, generate_word(), datetime.datetime.utcnow())
+        (uuid.uuid4().hex, datetime.datetime.utcnow(), generate_word())
         for i in range(count)
     ]
 
 
 def gen_participants(dialogs, users, type='single'):
     def make_dialog_touple(user_id, dialog_id, type):
-        return (user_id, dialog_id, datetime.datetime.utcnow(), type)
+        created = updated = datetime.datetime.utcnow()
+        return (user_id, dialog_id, created, updated, type, 0)
 
     def is_unique_pair(user_ids, users_dialogs):
         for user_id in user_ids:
@@ -126,7 +127,6 @@ def gen_messages(dialogs, users, count):
             datetime.datetime.utcfromtimestamp(
                 timestamp - random.getrandbits(20)
             ),
-            True if i > unread_count else False,
             generate_word(10),
         ))
 
@@ -151,8 +151,9 @@ async def fill_dialogs(conn, dialogs):
 
 async def fill_participants(conn, participants):
     values = [
-        "('{}', '{}', '{}', '{}')".format(
-            participant[0], participant[1], participant[2], participant[3]
+        "('{}', '{}', '{}'::timestamptz, '{}'::timestamptz, '{}', {})".format(
+            participant[0], participant[1], participant[2], participant[3],
+            participant[4], participant[5]
         )
         for participant in  participants
     ]
@@ -187,13 +188,12 @@ async def fill_messages(conn, dialogs, users, count):
     while counter < count:
         messages = gen_messages(dialogs, users, BATCH_SIZE)
         values = [
-            "('{}', '{}', {}, '{}'::timestamptz, '{}', '{}')".format(
+            "('{}', '{}', {}, '{}'::timestamptz, '{}')".format(
                 message[0],
                 message[1],
                 message[2],
                 message[3],
-                message[4],
-                message[5]
+                message[4]
             )
             for message in messages
         ]
