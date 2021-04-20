@@ -1,2 +1,2 @@
-asyncpg==0.18.3
+asyncpg==0.21.0
 pytz==2019.2
